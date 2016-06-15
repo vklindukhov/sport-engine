@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Immutable
 @EqualsAndHashCode(includes = ['url'])
-@ToString(includePackage = false, includes = ['name', 'allPlayers'])
+@ToString(includePackage = false, includes = ['name'])
 class ClubInfo {
     final static AtomicInteger COUNTER = new AtomicInteger(1)
     long id;
@@ -18,8 +18,9 @@ class ClubInfo {
     Map<String, Set<MatchReport>> matches
     String url
 
-    ClubInfo(String name) {
+    ClubInfo(String name, String url) {
         this.name = name
+        this.url = url
         allPlayers = []
         matches = new HashMap<>()
         id = COUNTER.getAndIncrement()

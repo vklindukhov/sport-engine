@@ -129,12 +129,17 @@ private void fillMatchesInfo(ClubInfo clubInfo) {
 
 void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
     def (competitionName, MatchReport matchReport) = createMatchReport(tr)
-    if (clubInfo.matches.get(competitionName) != null &&
-            !clubInfo.matches.get(competitionName).contains(matchReport)) {
-        matchReport.home.matches.get(competitionName) << matchReport
-        if(!matchReport.away.matches.containsKey(competitionName)) {
-            matchReport.away.matches[competitionName] = new HashSet<>()
-            matchReport.away.matches.get(competitionName) << matchReport
+    if (clubInfo?.matches?.get(competitionName)?.contains(matchReport)) {
+        println 'WARN: addMatchReport - ' + matchReport + ' - was not added'
+        return
+    }
+
+    try {
+        ClubInfo opponent = matchReport.home == clubInfo ? matchReport.away : matchReport.home
+        clubInfo.matches.get(competitionName) << matchReport
+        if (!opponent.matches.containsKey(competitionName)) {
+            opponent.matches[competitionName] = new HashSet<>()
+            opponent.matches.get(competitionName) << matchReport
         }
 
         def matchSummaryHtml = new HTTPBuilder(matchReport.url).get([:])
@@ -148,7 +153,10 @@ void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
             fillPlayersStatistics(matchReport, lineupsHtml, substitutionsHtml)
         } else if (goalsHml != null) fillMatchGoalsStatistics(matchReport, goalsHml)
         else if (infoHml != null) fillMatchSummaryInfo(matchReport, infoHml)
+    } catch (e) {
+        println 'ERROR: addMatchReport - ' + matchReport + ' - ' + e.getMessage()
     }
+
 }
 
 void fillPlayersStatistics(MatchReport matchReport, GPathResult lineUp, GPathResult subst) {
@@ -263,7 +271,7 @@ private List createMatchReport(NodeChild tr) {
 
     NodeChild homeClubTd = iterator.next() as NodeChild
     NodeChild homeClubA = homeClubTd.children().iterator().next() as NodeChild
-    String homeClubUrl = siteUrl + homeClubA.attributes().get('href')
+    String homeClubUrl = homeClubA.attributes().get('href')
 
     NodeChild scoreTd = iterator.next() as NodeChild
     NodeChild scoreA = scoreTd.children().iterator().next() as NodeChild
@@ -271,15 +279,22 @@ private List createMatchReport(NodeChild tr) {
 
     NodeChild awayClubTd = iterator.next() as NodeChild
     NodeChild awayClubA = awayClubTd.children().iterator().next() as NodeChild
-    String awayClubUrl = siteUrl + awayClubA.attributes().get('href')
+    String awayClubUrl = awayClubA.attributes().get('href')
 
     MatchReport matchReport = new MatchReport(
             url: matchDetailsUrl,
             date: parse(fullDate, ofPattern('dd/MM/yy', ENGLISH)),
-            home: CLUBS.get(homeClubUrl),
-            away: CLUBS.get(awayClubUrl)
+            home: getClubByUrl(homeClubA.toString().trim().toLowerCase(), homeClubUrl),
+            away: getClubByUrl(awayClubA.toString().trim().toLowerCase(), awayClubUrl)
     )
     [competitionName, matchReport]
+}
+
+private ClubInfo getClubByUrl(String name, String clubUrl) {
+    if ((CLUBS as Map).containsKey(clubUrl)) return CLUBS.get(clubUrl)
+    ClubInfo clubInfo = new ClubInfo(name, siteUrl + clubUrl)
+    CLUBS[clubUrl] = clubInfo
+    return clubInfo
 }
 
 private void putCompetitions(clubHtml, ClubInfo clubInfo) {
@@ -380,10 +395,7 @@ void addClubsInfos(GPathResult clubsHtml, clubsInfos) {
         String teamUrl = node.attributes().get('href')
         def isTeam = node.name().toLowerCase() == 'a' && teamUrl?.contains('/teams/')
         if (isTeam) {
-            ClubInfo clubInfo = new ClubInfo(node.toString().trim())
-            clubInfo.url = siteUrl + teamUrl
-            clubsInfos.add(clubInfo)
-            CLUBS[clubInfo.url] = clubInfo
+            clubsInfos.add(getClubByUrl(node.toString().trim(), teamUrl))
         }
         isTeam
     }

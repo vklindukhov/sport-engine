@@ -1,11 +1,13 @@
 package football
 
 import groovy.transform.EqualsAndHashCode
+import groovy.transform.ToString
 
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
 
 @EqualsAndHashCode(includes = ['id'])
+@ToString(includePackage = false, includes = ['home', 'away', 'url'])
 class MatchReport {
     final static AtomicInteger COUNTER = new AtomicInteger(1)
     long id;
