@@ -16,23 +16,19 @@ import static java.time.format.DateTimeFormatter.ofPattern
 import static java.util.Arrays.asList
 import static java.util.Locale.ENGLISH
 
-def myScoreUrl = 'http://www.myscore.com.ua/'
-def MY_SCORE_FOOTBALL_PATH = '/football/'
-def slurper = new XmlSlurper()
-
-
-def soccerWayUrl = 'http://int.soccerway.com/competitions/?ICID=TN_02'
-def http = new HTTPBuilder(soccerWayUrl)
-def html = http.get([:])
-def SOCCER_WAY_NATIONAL_PATH = '/national/'
+slurper = new XmlSlurper()
+soccerWayUrl = 'http://int.soccerway.com/competitions/?ICID=TN_02'
+http = new HTTPBuilder(soccerWayUrl)
+html = http.get([:])
+SOCCER_WAY_NATIONAL_PATH = '/national/'
 siteUrl = 'http://int.soccerway.com'
-String requestForLeaguesPrefix = siteUrl +
+requestForLeaguesPrefix = siteUrl +
         '/a/block_competitions_index_club_domestic' +
         '?block_id=page_competitions_1_block_competitions_index_club_domestic_4' +
         '&callback_params=%7B%22level%22%3A%222%22%7D' +
         '&action=expandItem' +
         '&params=%7B%22area_id%22%3A%22'
-String requestForLeaguesSuffix = '%22%2C%22level%22%3A2%2C%22item_key%22%3A%22area_id%22%7D'
+requestForLeaguesSuffix = '%22%2C%22level%22%3A2%2C%22item_key%22%3A%22area_id%22%7D'
 
 COUNTRIES = new HashMap<>()
 LEAGUES = new HashMap<>()
@@ -40,34 +36,55 @@ CLUBS = new HashMap<>()
 PLAYERS = new HashMap<>()
 MATCH_REPORTS = new HashMap<>()
 
-List<NodeChild> countries = html."**".findAll {
-    def node = it as NodeChild
-    def name = node.name().toLowerCase()
-    def attributes = node.attributes()
-    def countryLinkPath = attributes.get('href') as String
-    name == 'a' && attributes.containsKey('href') && countryLinkPath.count('/') == 4 && countryLinkPath.contains('/a')
-}
 
-List<CountryInfo> countriesPathsEntries = countries.collect {
-    String path = it.attributes().get('href') as String
-    String withoutNationalPath = path.replace(SOCCER_WAY_NATIONAL_PATH, '')
-    String codeWithSlashes = withoutNationalPath.substring(withoutNationalPath.indexOf('/'))
-    String code = codeWithSlashes.replace('/', '')
-    String number = code.replace('a', '')
-    String urlRequest = requestForLeaguesPrefix + number + requestForLeaguesSuffix
-    CountryInfo countryInfo = new CountryInfo(name: it.toString().trim(), leaguesUrlRequest: urlRequest)
-    COUNTRIES[countryInfo.name] = countryInfo
-    countryInfo
-}
+justDoIt()
 
-countriesPathsEntries.each {
-    println it.name.toUpperCase() + ':'
-    def htmlContent = getHtmlContent(it.getLeaguesUrlRequest())
-    htmlContent = htmlContent.replace('&', 'and')
-    it.leagueInfos = getLeaguesInfos(findLeaguesHtmls(slurper.parseText(htmlContent)))
-}
+void justDoIt() {
+    String outputFileName = 'statistics'
+    String outputFileExtension = '.log'
+    PrintStream out = null;
+    PrintStream err = null;
+    if (outputFileName != null) {
+        out = new PrintStream(new BufferedOutputStream(new FileOutputStream(new File(outputFileName + outputFileExtension))));
+        System.setOut(out);
+        err = new PrintStream(new BufferedOutputStream(new FileOutputStream(new File(outputFileName + '_err' + outputFileExtension))));
+        System.setErr(err);
+    }
 
-println countriesPathsEntries
+    List<NodeChild> countries = html."**".findAll {
+        def node = it as NodeChild
+        def name = node.name().toLowerCase()
+        def attributes = node.attributes()
+        def countryLinkPath = attributes.get('href') as String
+        name == 'a' && attributes.containsKey('href') && countryLinkPath.count('/') == 4 && countryLinkPath.contains('/a')
+    }
+
+    List<CountryInfo> countriesPathsEntries = countries.collect {
+        String path = it.attributes().get('href') as String
+        String withoutNationalPath = path.replace(SOCCER_WAY_NATIONAL_PATH as String, '')
+        String codeWithSlashes = withoutNationalPath.substring(withoutNationalPath.indexOf('/'))
+        String code = codeWithSlashes.replace('/', '')
+        String number = code.replace('a', '')
+        String urlRequest = requestForLeaguesPrefix + number + requestForLeaguesSuffix
+        CountryInfo countryInfo = new CountryInfo(name: it.toString().trim(), leaguesUrlRequest: urlRequest)
+        COUNTRIES[countryInfo.name] = countryInfo
+        countryInfo
+    }
+
+    countriesPathsEntries.each {
+        println it.name.toUpperCase() + ':'
+        def htmlContent = getHtmlContent(it.getLeaguesUrlRequest())
+        htmlContent = htmlContent.replace('&', 'and')
+        it.leagueInfos = getLeaguesInfos(findLeaguesHtmls(slurper.parseText(htmlContent)))
+    }
+
+    println countriesPathsEntries
+
+    if (outputFileName != null) {
+        out.close();
+        err.close();
+    }
+}
 
 
 List<LeagueInfo> getLeaguesInfos(List<NodeChild> leagues) {
@@ -99,7 +116,7 @@ Set<ClubInfo> getClubsInfo(GPathResult clubsHtml) {
             fillSquadInfo(clubInfo)
             fillMatchesInfo(clubInfo)
         } catch (e) {
-            println 'ERROR: getClubsInfo.each - ' + clubInfo.url + ' - ' + e.getMessage()
+            System.err.println ('getClubsInfo.each - ' + clubInfo.url + ' - ' + e.getMessage())
         }
     }
 
@@ -120,9 +137,8 @@ private void fillMatchesInfo(ClubInfo clubInfo) {
             addMatchReport(tr, clubInfo)
         }
 
-        fillClubInfo(clubInfo)
     } catch (e) {
-        println 'ERROR: fillMatchesInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage()
+        System.err.println('fillMatchesInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage())
     }
 
 }
@@ -130,7 +146,7 @@ private void fillMatchesInfo(ClubInfo clubInfo) {
 void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
     def (competitionName, MatchReport matchReport) = createMatchReport(tr)
     if (clubInfo?.matches?.get(competitionName)?.contains(matchReport)) {
-        println 'WARN: addMatchReport - ' + matchReport + ' - was not added'
+        System.err.println('addMatchReport - ' + matchReport + ' - was not added')
         return
     }
 
@@ -152,7 +168,7 @@ void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
         } else if (goalsHml != null) fillMatchGoalsStatistics(matchReport, goalsHml)
         else if (infoHml != null) fillMatchSummaryInfo(matchReport, infoHml)
     } catch (e) {
-        println 'ERROR: addMatchReport - ' + matchReport + ' - ' + e.getMessage()
+        System.err.println('addMatchReport - ' + matchReport + ' - ' + e.getMessage())
         continue error
     }
 
@@ -195,11 +211,11 @@ boolean isTagWithAttributeValue(NodeChild node, String tagName, String attrName,
             }
             return false
         }
-        isTag
+        return isTag
     } catch (e) {
-        println 'ERROR: isTagWithAttributeValue - ' + e.getMessage()
+        System.err.println('isTagWithAttributeValue - ' + e.getMessage())
+        return false
     }
-
 }
 
 List<PlayerInfo> fillEventReportAndCreateLineUpForClub(GPathResult lineup, StatisticsReport statisticsReport, ClubInfo clubInfo) {
@@ -240,7 +256,7 @@ List<PlayerInfo> fillEventReportAndCreateLineUpForClub(GPathResult lineup, Stati
                 return true
             }
         } catch (e) {
-            println 'ERROR: fillEventReportAndCreateLineUpForClub.findAll - ' + e.getMessage()
+            System.err.println('fillEventReportAndCreateLineUpForClub.findAll - ' + e.getMessage())
         }
         false
     }
@@ -330,9 +346,8 @@ private void fillSquadInfo(ClubInfo clubInfo) {
             }
             isPlayerNode
         }
-        fillClubInfo(clubInfo)
     } catch (e) {
-        println 'ERROR: fillSquadInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage()
+        System.err.println('fillSquadInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage())
     }
 
 
@@ -381,7 +396,7 @@ private void fillPassportData(PlayerInfo playerInfo, NodeChild node, String dtNa
                 break
         }
     } catch (e) {
-        println e.getMessage()
+        System.err.println('fillPassportData - ' + playerInfo + ' ' + e.getMessage())
     }
 }
 
@@ -401,15 +416,6 @@ void addClubsInfos(GPathResult clubsHtml, clubsInfos) {
     }
 }
 
-void fillClubInfo(ClubInfo clubInfo) {
-    try {
-        def clubHtml = new HTTPBuilder(clubInfo.url).get([:])
-    } catch (e) {
-        println 'ERROR: fillClubInfo - ' + clubInfo.url + ' - ' + e.getMessage()
-    }
-    null
-}
-
 String getLeagueUrl(String leagueUrl) {
     try {
         def html = new HTTPBuilder(leagueUrl).get([:]) { resp, reader -> resp.headers }
@@ -419,7 +425,7 @@ String getLeagueUrl(String leagueUrl) {
         def location = 'http://' + locationWithBrackets.replace('[', '').replace(']', '').replace(':80', '')
         location.contains('regular-season') ? location : null
     } catch (Exception e) {
-        println 'ERROR: getLeagueUrl - ' + leagueUrl + ' - ' + e.getMessage()
+        System.err.println('getLeagueUrl - ' + leagueUrl + ' - ' + e.getMessage())
         null
     }
 }
