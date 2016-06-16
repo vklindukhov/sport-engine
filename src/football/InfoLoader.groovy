@@ -38,7 +38,7 @@ COUNTRIES = new HashMap<>()
 LEAGUES = new HashMap<>()
 CLUBS = new HashMap<>()
 PLAYERS = new HashMap<>()
-
+MATCH_REPORTS = new HashMap<>()
 
 List<NodeChild> countries = html."**".findAll {
     def node = it as NodeChild
@@ -135,12 +135,10 @@ void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
     }
 
     try {
+        error:
+        clubInfo.getCompetitionMatches(competitionName) << matchReport
         ClubInfo opponent = matchReport.home == clubInfo ? matchReport.away : matchReport.home
-        clubInfo.matches.get(competitionName) << matchReport
-        if (!opponent.matches.containsKey(competitionName)) {
-            opponent.matches[competitionName] = new HashSet<>()
-            opponent.matches.get(competitionName) << matchReport
-        }
+        opponent.getCompetitionMatches(competitionName) << matchReport
 
         def matchSummaryHtml = new HTTPBuilder(matchReport.url).get([:])
 
@@ -155,6 +153,7 @@ void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
         else if (infoHml != null) fillMatchSummaryInfo(matchReport, infoHml)
     } catch (e) {
         println 'ERROR: addMatchReport - ' + matchReport + ' - ' + e.getMessage()
+        continue error
     }
 
 }
@@ -287,6 +286,7 @@ private List createMatchReport(NodeChild tr) {
             home: getClubByUrl(homeClubA.toString().trim().toLowerCase(), homeClubUrl),
             away: getClubByUrl(awayClubA.toString().trim().toLowerCase(), awayClubUrl)
     )
+    MATCH_REPORTS[matchReport.url] = matchReport
     [competitionName, matchReport]
 }
 
@@ -307,7 +307,7 @@ private void putCompetitions(clubHtml, ClubInfo clubInfo) {
         def isCompetitionNode = node.name().toLowerCase() == 'a'
         def competitionName = node.toString().trim()
         if (isCompetitionNode && competitionName != 'All' && !clubInfo.matches.containsKey(competitionName)) {
-            clubInfo.matches[competitionName] = new HashSet<>()
+            clubInfo.getCompetitionMatches(competitionName)
         }
         isCompetitionNode
     }
@@ -541,31 +541,29 @@ void fillMatchSummaryInfo(MatchReport matchReport, GPathResult html) {
     } as NodeChild
 
     if (fullDlNode != null) {
-        def iterator = halfDlNode.children().iterator()
-        iterator.next() //dt
-        String[] split = iterator.next().toString().split(' - ')
+        String[] split = fullDlNode.toString().replace('Full-time','').split(' - ')
         byte homeFull = split[0].toInteger() as byte
         byte awayFull = split[1].toInteger() as byte
-        if (home1stHalf == -1 && away1stHalf == -1) {
+        if (home1stHalf > -1 && away1stHalf > -1) {
             home2ndHalf = homeFull - home1stHalf
             away2ndHalf = awayFull - away1stHalf
-            1.upto(home1stHalf) {
+            home1stHalf.times {
                 matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-1 as byte, GOAL, null))
             }
-            1.upto(home2ndHalf) {
+            home2ndHalf.times {
                 matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
             }
-            1.upto(away1stHalf) {
+            away1stHalf.times {
                 matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-1 as byte, GOAL, null))
             }
-            1.upto(away2ndHalf) {
+            away2ndHalf.times {
                 matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-2 as byte, GOAL, null))
             }
         } else {
-            1.upto(homeFull) {
+            homeFull.times {
                 matchReport.resultReport.addEventReport(matchReport.home, new EventReport(0 as byte, GOAL, null))
             }
-            1.upto(awayFull) {
+            awayFull.times {
                 matchReport.resultReport.addEventReport(matchReport.away, new EventReport(0 as byte, GOAL, null))
             }
         }

@@ -35,4 +35,9 @@ class ClubInfo {
          player.clubs[-1].end = endAt
         allPlayers.remove player
     }
+
+    Set<MatchReport> getCompetitionMatches(String competitionName) {
+        if(!matches.containsKey(competitionName)) matches[competitionName] = new HashSet<>()
+        return matches[competitionName]
+    }
 }
