@@ -525,56 +525,51 @@ private EventReport getAssistReport(Iterator subIterator, Number minute) {
 }
 
 void fillMatchSummaryInfo(MatchReport matchReport, GPathResult html) {
-    NodeChild halfDlNode = html."**".find {
-        NodeChild node = it as NodeChild
-        def iterator = node.children().iterator()
-        isTagWithName(node as NodeChild, 'dl') && iterator.next().toString() == 'Half-time'
-    } as NodeChild
-
-    byte home1stHalf = away1stHalf = -1
-    if (halfDlNode != null) {
-        def iterator = halfDlNode.children().iterator()
-        iterator.next() //dt
-        String[] split = iterator.next().toString().split(' - ')
-        home1stHalf = split[0].toInteger() as byte
-        away1stHalf = split[1].toInteger() as byte
-    }
-
-    NodeChild fullDlNode = html."**".find {
-        NodeChild node = it as NodeChild
-        def iterator = node.children().iterator()
-        isTagWithName(node as NodeChild, 'dl') && iterator.next().toString() == 'Full-time'
-    } as NodeChild
-
-    if (fullDlNode != null) {
-        String[] split = fullDlNode.toString().replace('Full-time','').split(' - ')
-        byte homeFull = split[0].toInteger() as byte
-        byte awayFull = split[1].toInteger() as byte
-        if (home1stHalf > -1 && away1stHalf > -1) {
-            home2ndHalf = homeFull - home1stHalf
-            away2ndHalf = awayFull - away1stHalf
-            home1stHalf.times {
-                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-1 as byte, GOAL, null))
-            }
-            home2ndHalf.times {
+    String info = html.toString()
+    String fullTimeAndSoOn
+    if(info.contains('Half-time')) {
+        String halfTimeAndSoOn = info.substring(info.indexOf('Half-time'))
+        fullTimeAndSoOn = halfTimeAndSoOn.substring(halfTimeAndSoOn.indexOf('Full-time')).trim()
+        String halTime = halfTimeAndSoOn - fullTimeAndSoOn
+        List<Integer> halfTimeGoalsAmounts = addGoalsEventsReports(halTime, matchReport, -1 as byte)
+        if(fullTimeAndSoOn > 'Full-time10 - 10') {
+            String[] parts = fullTimeAndSoOn.split(' - ')
+            int secondTimeHomeGoalsAmount = parts[0].replace('Full-time','').toInteger() - halfTimeGoalsAmounts[0]
+            secondTimeHomeGoalsAmount.times {
                 matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
             }
-            away1stHalf.times {
-                matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-1 as byte, GOAL, null))
-            }
-            away2ndHalf.times {
-                matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-2 as byte, GOAL, null))
+            int secondTimeAwayGoalsAmount = parts[1].substring(0,parts[1].indexOf(parts[1].find(/\D/))).toInteger()
+            secondTimeAwayGoalsAmount.times {
+                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
             }
         } else {
-            homeFull.times {
-                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(0 as byte, GOAL, null))
+            String[] score = halTime.split(' - ')
+            int secondTimeHomeGoalsAmount = score[0].toInteger()
+            int secondTimeAwayGoalsAmount = score[1].toInteger()
+            secondTimeHomeGoalsAmount.times {
+                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
             }
-            awayFull.times {
-                matchReport.resultReport.addEventReport(matchReport.away, new EventReport(0 as byte, GOAL, null))
+            secondTimeAwayGoalsAmount.times {
+                matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-2 as byte, GOAL, null))
             }
         }
-
+    } else if(info.contains('Full-time')) {
+        fullTimeAndSoOn = info.substring(info.indexOf('Full-time')).trim()
+        if(fullTimeAndSoOn < 'Full-time10 - 10') addGoalsEventsReports(fullTimeAndSoOn, matchReport, 0 as byte)
     }
+}
+
+private List<Integer> addGoalsEventsReports(String halTime, matchReport, byte timeCode) {
+    String[] score = halTime.split(' - ')
+    int homeGoalsAmount = score[0].toInteger()
+    int awayGoalsAmount = score[1].toInteger()
+    homeGoalsAmount.times {
+        matchReport.resultReport.addEventReport(matchReport.home, new EventReport(timeCode, GOAL, null))
+    }
+    awayGoalsAmount.times {
+        matchReport.resultReport.addEventReport(matchReport.away, new EventReport(timeCode, GOAL, null))
+    }
+    [homeGoalsAmount, awayGoalsAmount]
 }
 
 EventReport.EventType defineEventType(String srcPath) {
