@@ -531,8 +531,8 @@ void fillMatchSummaryInfo(MatchReport matchReport, GPathResult html) {
         String halfTimeAndSoOn = info.substring(info.indexOf('Half-time'))
         fullTimeAndSoOn = halfTimeAndSoOn.substring(halfTimeAndSoOn.indexOf('Full-time')).trim()
         String halTime = halfTimeAndSoOn - fullTimeAndSoOn
-        List<Integer> halfTimeGoalsAmounts = addGoalsEventsReports(halTime, matchReport, -1 as byte)
-        if(fullTimeAndSoOn > 'Full-time10 - 10') {
+        List<Integer> halfTimeGoalsAmounts = addGoalsEventsReports(halTime.replace('Half-time'), matchReport, -1 as byte)
+        if(fullTimeAndSoOn.length() > 'Full-time10 - 10'.length()) {
             String[] parts = fullTimeAndSoOn.split(' - ')
             int secondTimeHomeGoalsAmount = parts[0].replace('Full-time','').toInteger() - halfTimeGoalsAmounts[0]
             secondTimeHomeGoalsAmount.times {
@@ -555,7 +555,7 @@ void fillMatchSummaryInfo(MatchReport matchReport, GPathResult html) {
         }
     } else if(info.contains('Full-time')) {
         fullTimeAndSoOn = info.substring(info.indexOf('Full-time')).trim()
-        if(fullTimeAndSoOn < 'Full-time10 - 10') addGoalsEventsReports(fullTimeAndSoOn, matchReport, 0 as byte)
+        if(fullTimeAndSoOn.length() < 'Full-time10 - 10'.length()) addGoalsEventsReports(fullTimeAndSoOn.replace('Full-time'), matchReport, 0 as byte)
     }
 }
 
