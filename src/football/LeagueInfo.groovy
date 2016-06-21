@@ -7,7 +7,7 @@ import jdk.nashorn.internal.ir.annotations.Immutable
 import java.util.concurrent.atomic.AtomicInteger
 
 @Immutable
-@EqualsAndHashCode(includes = ['id'])
+@EqualsAndHashCode(includes = ['url'])
 @ToString(includePackage = false, includes = ['name'])
 class LeagueInfo {
     final static AtomicInteger COUNTER = new AtomicInteger(1)

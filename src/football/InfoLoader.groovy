@@ -30,12 +30,14 @@ requestForLeaguesPrefix = siteUrl +
         '&params=%7B%22area_id%22%3A%22'
 requestForLeaguesSuffix = '%22%2C%22level%22%3A2%2C%22item_key%22%3A%22area_id%22%7D'
 
-COUNTRIES = new HashMap<>()
+startFromCountry = 'England'
+COUNTRIES = new TreeMap<>()
 LEAGUES = new HashMap<>()
 CLUBS = new HashMap<>()
 PLAYERS = new HashMap<>()
 MATCH_REPORTS = new HashMap<>()
-
+MAX_ERRORS_ATTEMPTS = 5
+MAX_MAIN_LEAGUES_AMOUNT = 5
 
 justDoIt()
 
@@ -51,13 +53,20 @@ void justDoIt() {
         System.setErr(err);
     }
 
+    System.out.println('-------------------STARTED--------------------')
     List<NodeChild> countries = html."**".findAll {
         def node = it as NodeChild
         def name = node.name().toLowerCase()
         def attributes = node.attributes()
         def countryLinkPath = attributes.get('href') as String
-        name == 'a' && attributes.containsKey('href') && countryLinkPath.count('/') == 4 && countryLinkPath.contains('/a')
+        String countryName = it.toString().trim() as String
+        boolean isMatch = name == 'a' && attributes.containsKey('href') && countryLinkPath.count('/') == 4 && countryLinkPath.contains('/a')
+        if(isMatch) {
+            int compared = countryName.compareTo(startFromCountry)
+            return isMatch && -1 < compared
+        }
     }
+    System.out.println("Found ${countries.size()} countries")
 
     List<CountryInfo> countriesPathsEntries = countries.collect {
         String path = it.attributes().get('href') as String
@@ -72,10 +81,13 @@ void justDoIt() {
     }
 
     countriesPathsEntries.each {
-        println it.name.toUpperCase() + ':'
+        System.out.println("FILLING COUNTRY INFO FOR ${it.name.toUpperCase()} BY URL ${it.leaguesUrlRequest}")
         def htmlContent = getHtmlContent(it.getLeaguesUrlRequest())
         htmlContent = htmlContent.replace('&', 'and')
-        it.leagueInfos = getLeaguesInfos(findLeaguesHtmls(slurper.parseText(htmlContent)))
+        List<NodeChild> leaguesNodes = findLeaguesNodes(slurper.parseText(htmlContent))
+        System.out.println("FOR COUNTRY ${it.name.toUpperCase()} FOUND ${leaguesNodes.size()}")
+        it.leagueInfos = getLeaguesInfos(leaguesNodes)
+        System.out.println("INFO FOR COUNTRY ${it.name.toUpperCase()} IS FILLED\n\n\n")
     }
 
     println countriesPathsEntries
@@ -91,40 +103,49 @@ List<LeagueInfo> getLeaguesInfos(List<NodeChild> leagues) {
     leagues.collect {
         LeagueInfo leagueInfo
         String leagueName = it.toString().trim()
+        System.out.println("League ${leagueName}")
         String leagueRequestUrl = siteUrl + it.attributes().get('href')
-        def leagueUrl = getLeagueUrl(leagueRequestUrl)
-        if (leagueUrl != null) {
-            def tablesUrl = leagueUrl + 'tables'
-            println leagueName + ' - ' + tablesUrl
-            def clubsHtml = new HTTPBuilder(tablesUrl).get([:])
-            leagueInfo = new LeagueInfo(name: leagueName, url: leagueRequestUrl, leagueUrl: leagueUrl, tablesUrl: tablesUrl)
-            leagueInfo.clubs = getClubsInfo(clubsHtml as GPathResult)
-        }
+        String leagueUrl = getLeagueUrl(leagueRequestUrl)
+        def tablesUrl = leagueUrl + 'tables'
+        System.out.println("Leagues ${leagueName} tables url ${tablesUrl}")
+        def clubsHtml = new HTTPBuilder(tablesUrl).get([:])
+        leagueInfo = new LeagueInfo(name: leagueName, url: leagueRequestUrl, leagueUrl: leagueUrl, tablesUrl: tablesUrl)
+        System.out.println("Getting clubs info for league ${leagueName}")
+        leagueInfo.clubs = getClubsInfo(clubsHtml as GPathResult)
         leagueInfo = new LeagueInfo(name: leagueName, url: leagueRequestUrl, leagueUrl: leagueUrl)
         LEAGUES[leagueInfo.url] = leagueInfo
+        System.out.println("Info for league ${leagueInfo.name} is filled\n\n")
         leagueInfo
     }
 }
 
 Set<ClubInfo> getClubsInfo(GPathResult clubsHtml) {
+    System.out.println("Getting clubs info for league ")
     Set<ClubInfo> clubsInfos = new HashSet<>()
     addClubsInfos(clubsHtml, clubsInfos)
 
     clubsInfos.each {
+        errorAttempts = 0
         ClubInfo clubInfo = it
         try {
+            error:
             fillSquadInfo(clubInfo)
             fillMatchesInfo(clubInfo)
+            System.out.println("Info for club ${clubInfo.name} is filled\n")
         } catch (e) {
             System.err.println ('getClubsInfo.each - ' + clubInfo.url + ' - ' + e.getMessage())
+            if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
         }
     }
 
     clubsInfos
 }
 
-private void fillMatchesInfo(ClubInfo clubInfo) {
+void fillMatchesInfo(ClubInfo clubInfo) {
+    errorAttempts = 0
     try {
+        System.out.println("Filling matches info for club ${clubInfo.name}")
+        error:
         def clubHtml = new HTTPBuilder(clubInfo.url + 'matches').get([:])
         clubInfo.matches = new HashMap<>()
         putCompetitions(clubHtml, clubInfo)
@@ -139,17 +160,20 @@ private void fillMatchesInfo(ClubInfo clubInfo) {
 
     } catch (e) {
         System.err.println('fillMatchesInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage())
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
     }
 
 }
 
 void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
-    def (competitionName, MatchReport matchReport) = createMatchReport(tr)
+    System.out.println("Adding match info for club ${clubInfo.name}")
+    def (competitionName, MatchReport matchReport, boolean isNewlyCreated) = getMatchReport(tr)
     if (clubInfo?.matches?.get(competitionName)?.contains(matchReport)) {
         System.err.println('addMatchReport - ' + matchReport + ' - was not added')
         return
-    }
+    } else if(!isNewlyCreated) return
 
+    errorAttempts = 0
     try {
         error:
         clubInfo.getCompetitionMatches(competitionName) << matchReport
@@ -164,12 +188,18 @@ void addMatchReport(NodeChild tr, ClubInfo clubInfo) {
         GPathResult substitutionsHtml = findTagWithAttributeValue(matchSummaryHtml, 'div', 'class', 'block_match_substitutes')
 
         if (lineupsHtml != null) {
+            System.out.println("Filling full teams statistics")
             fillPlayersStatistics(matchReport, lineupsHtml, substitutionsHtml)
-        } else if (goalsHml != null) fillMatchGoalsStatistics(matchReport, goalsHml)
-        else if (infoHml != null) fillMatchSummaryInfo(matchReport, infoHml)
+        } else if (goalsHml != null) {
+            System.out.println("Filling only goals teams statistics")
+            fillMatchGoalsStatistics(matchReport, goalsHml)
+        } else if (infoHml != null) {
+            System.out.println("Filling only summary teams statistics")
+            fillMatchSummaryInfo(matchReport, infoHml)
+        }
     } catch (e) {
         System.err.println('addMatchReport - ' + matchReport + ' - ' + e.getMessage())
-        continue error
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
     }
 
 }
@@ -180,17 +210,23 @@ void fillPlayersStatistics(MatchReport matchReport, GPathResult lineUp, GPathRes
 }
 
 void fillHomeMatchLineUps(MatchReport matchReport, GPathResult lineUp, GPathResult subst) {
+    System.out.println("Filling home match line up for club ${matchReport.home.name}")
     GPathResult homeLineUp = findTagWithAttributeValue(findTagWithAttributeValue(lineUp, 'div', 'class', 'container left'), 'tbody', null, null)
+    System.out.println("Filling start 11 for home club")
     List<PlayerInfo> homeStart11 = fillEventReportAndCreateLineUpForClub(homeLineUp, matchReport.resultReport, matchReport.home)
     GPathResult homeSubst = findTagWithAttributeValue(findTagWithAttributeValue(subst, 'div', 'class', 'container left'), 'tbody', null, null)
+    System.out.println("Filling substitutions for home club")
     List<PlayerInfo> homeSubstitution = fillEventReportAndCreateLineUpForClub(homeSubst, matchReport.resultReport, matchReport.home)
     matchReport.lineups[matchReport.home] = new MatchLineUp(start11: homeStart11, substitutions: homeSubstitution)
 }
 
 void fillAwayLineUps(MatchReport matchReport, GPathResult lineUp, GPathResult subst) {
+    System.out.println("Filling home match line up for club ${matchReport.away.name}")
     GPathResult awayLineUp = findTagWithAttributeValue(findTagWithAttributeValue(lineUp, 'div', 'class', 'container right'), 'tbody', null, null)
+    System.out.println("Filling start 11 for away club")
     List<PlayerInfo> awayStart11 = fillEventReportAndCreateLineUpForClub(awayLineUp, matchReport.resultReport, matchReport.away)
     GPathResult awaySubst = findTagWithAttributeValue(findTagWithAttributeValue(subst, 'div', 'class', 'container right'), 'tbody', null, null)
+    System.out.println("Filling substitutions for away club")
     List<PlayerInfo> awaySubstitution = fillEventReportAndCreateLineUpForClub(awaySubst, matchReport.resultReport, matchReport.away)
     matchReport.lineups[matchReport.away] = new MatchLineUp(start11: awayStart11, substitutions: awaySubstitution)
 }
@@ -222,7 +258,9 @@ List<PlayerInfo> fillEventReportAndCreateLineUpForClub(GPathResult lineup, Stati
     List<PlayerInfo> players = new ArrayList<PlayerInfo>();
 
     lineup."**".findAll {
+        errorAttempts = 0
         try {
+            error:
             NodeChild node = it as NodeChild
             if (isTagWithName(node, 'tr') && isTagWithAttributeValue(node.children().iterator().next() as NodeChild, 'td', 'class', 'player large-link')) {
                 Iterator iterator = node.children().iterator()
@@ -246,7 +284,8 @@ List<PlayerInfo> fillEventReportAndCreateLineUpForClub(GPathResult lineup, Stati
                 bookingsTd.children().each {
                     NodeChild eventSpan = it as NodeChild
                     NodeChild eventImg = eventSpan.children().iterator().next() as NodeChild
-                    int atMinute = eventSpan.toString().find(/\d+/).toInteger()
+                    String minuteStr = eventSpan.toString()
+                    int atMinute = minuteStr.find(/\d+/)?.toInteger() ?: 0
                     if (atMinute > 120) atMinute /= 10
                     EventReport.EventType eventType = defineEventType(eventImg.attributes().get('src') as String)
                     EventReport eventReport = new EventReport(atMinute as byte, eventType, playerInfo)
@@ -257,6 +296,7 @@ List<PlayerInfo> fillEventReportAndCreateLineUpForClub(GPathResult lineup, Stati
             }
         } catch (e) {
             System.err.println('fillEventReportAndCreateLineUpForClub.findAll - ' + e.getMessage())
+            if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
         }
         false
     }
@@ -271,7 +311,9 @@ boolean isBlank(String str) {
     str == null || str.isEmpty()
 }
 
-private List createMatchReport(NodeChild tr) {
+List getMatchReport(NodeChild tr) {
+    System.out.println("Getting match report")
+
     Iterator iterator = tr.children().iterator()
     NodeChild dayOfWeekNodeChild = iterator.next() as NodeChild
     String dayOfWeek = dayOfWeekNodeChild.toString().trim() /*dd/MM/yyyy*/
@@ -290,30 +332,40 @@ private List createMatchReport(NodeChild tr) {
 
     NodeChild scoreTd = iterator.next() as NodeChild
     NodeChild scoreA = scoreTd.children().iterator().next() as NodeChild
-    String matchDetailsUrl = siteUrl + scoreA.attributes().get('href')
+
+    def pathUrl = scoreA.attributes().get('href')
+    String matchDetailsUrl = siteUrl + pathUrl
+
+    if (MATCH_REPORTS.containsKey(pathUrl)) {
+        System.out.println("Match report already exists ${matchDetailsUrl}")
+        return [competitionName, MATCH_REPORTS.get(pathUrl), false]
+    }
 
     NodeChild awayClubTd = iterator.next() as NodeChild
     NodeChild awayClubA = awayClubTd.children().iterator().next() as NodeChild
     String awayClubUrl = awayClubA.attributes().get('href')
-
+    def homeClubName = homeClubA.toString().trim()
+    def awayClubName = awayClubA.toString().trim()
+    System.out.println("Created new match report: ${dayOfWeek} | ${fullDate} | ${competitionCode} | ${competitionName} | ${homeClubName} vs ${awayClubName} | ${matchDetailsUrl}")
     MatchReport matchReport = new MatchReport(
             url: matchDetailsUrl,
-            date: parse(fullDate, ofPattern('dd/MM/yy', ENGLISH)),
-            home: getClubByUrl(homeClubA.toString().trim().toLowerCase(), homeClubUrl),
-            away: getClubByUrl(awayClubA.toString().trim().toLowerCase(), awayClubUrl)
+            date:  parse(fullDate, ofPattern('dd/MM/yy', ENGLISH)),
+            home: getClubByUrl(homeClubName, homeClubUrl),
+            away: getClubByUrl(awayClubName, awayClubUrl)
     )
     MATCH_REPORTS[matchReport.url] = matchReport
-    [competitionName, matchReport]
+    [competitionName, matchReport, true]
 }
 
-private ClubInfo getClubByUrl(String name, String clubUrl) {
+ClubInfo getClubByUrl(String name, String clubUrl) {
     if ((CLUBS as Map).containsKey(clubUrl)) return CLUBS.get(clubUrl)
+    System.out.println("Does not contain club ${name} by url ${siteUrl + clubUrl}, creating new one")
     ClubInfo clubInfo = new ClubInfo(name, siteUrl + clubUrl)
     CLUBS[clubUrl] = clubInfo
     return clubInfo
 }
 
-private void putCompetitions(clubHtml, ClubInfo clubInfo) {
+void putCompetitions(clubHtml, ClubInfo clubInfo) {
     GPathResult competitionsContainer = clubHtml?."**"?.find {
         it.name().toLowerCase() == 'ul' && it.attributes().get('id')?.contains('page_team_')
     } as GPathResult
@@ -329,8 +381,11 @@ private void putCompetitions(clubHtml, ClubInfo clubInfo) {
     }
 }
 
-private void fillSquadInfo(ClubInfo clubInfo) {
+void fillSquadInfo(ClubInfo clubInfo) {
+    System.out.println("Filling squad for club ${clubInfo.name}")
+    errorAttempts = 0
     try {
+        error:
         def clubHtml = new HTTPBuilder(clubInfo.url + 'squad').get([:])
         clubInfo.allPlayers = new HashSet<>()
         GPathResult tBody = clubHtml?."**"?.find {
@@ -348,9 +403,8 @@ private void fillSquadInfo(ClubInfo clubInfo) {
         }
     } catch (e) {
         System.err.println('fillSquadInfo.clubInfo - ' + clubInfo.name + ' ' + clubInfo.url + ' - ' + e.getMessage())
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
     }
-
-
 }
 
 PlayerInfo createPlayerInfo(String playerPath) {
@@ -375,9 +429,12 @@ PlayerInfo createPlayerInfo(String playerPath) {
     playerInfo
 }
 
-private void fillPassportData(PlayerInfo playerInfo, NodeChild node, String dtName) {
+void fillPassportData(PlayerInfo playerInfo, NodeChild node, String dtName) {
+    errorAttempts = 0
     try {
+        error:
         def value = node.toString().trim()
+        if (value == null || value.isEmpty()) return
         switch (dtName) {
             case 'First name': playerInfo.name = value
                 break
@@ -397,6 +454,7 @@ private void fillPassportData(PlayerInfo playerInfo, NodeChild node, String dtNa
         }
     } catch (e) {
         System.err.println('fillPassportData - ' + playerInfo + ' ' + e.getMessage())
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
     }
 }
 
@@ -410,33 +468,65 @@ void addClubsInfos(GPathResult clubsHtml, clubsInfos) {
         String teamUrl = node.attributes().get('href')
         def isTeam = node.name().toLowerCase() == 'a' && teamUrl?.contains('/teams/')
         if (isTeam) {
-            clubsInfos.add(getClubByUrl(node.toString().trim(), teamUrl))
+            def clubName = node.toString().trim()
+            System.out.println("Getting clubs info for club ${clubName} and url ${teamUrl}")
+            clubsInfos.add(getClubByUrl(clubName, teamUrl))
         }
         isTeam
     }
 }
 
 String getLeagueUrl(String leagueUrl) {
+    errorAttempts = 0
     try {
+        error:
         def html = new HTTPBuilder(leagueUrl).get([:]) { resp, reader -> resp.headers }
         HttpResponseDecorator.HeadersDecorator headerDecorator = html as HttpResponseDecorator.HeadersDecorator
         HttpResponseDecorator wrapper = headerDecorator.this$0
         def locationWithBrackets = wrapper.getContext().getAttribute('http.cookie-origin') as String
-        def location = 'http://' + locationWithBrackets.replace('[', '').replace(']', '').replace(':80', '')
-        location.contains('regular-season') ? location : null
+        leagueUrl = 'http://' + locationWithBrackets.replace('[', '').replace(']', '').replace(':80', '')
+        String wrongUrl = leagueUrl
+        if (leagueUrl.contains('20162017')) {
+            def needSeason = '20152016'
+            def replaced = leagueUrl.replace('20162017', needSeason)
+            leagueUrl = replaced.substring(0, replaced.indexOf(needSeason) + needSeason.length())
+            if(wrongUrl.contains('final-stages')) {
+                leagueUrl += + '/regular-season/'
+            }
+            html = new HTTPBuilder(leagueUrl).get([:]) { resp, reader -> resp.headers }
+            headerDecorator = html as HttpResponseDecorator.HeadersDecorator
+            wrapper = headerDecorator.this$0
+            locationWithBrackets = wrapper.getContext().getAttribute('http.cookie-origin') as String
+            leagueUrl = 'http://' + locationWithBrackets.replace('[', '').replace(']', '').replace(':80', '')
+        }
+        leagueUrl
     } catch (Exception e) {
         System.err.println('getLeagueUrl - ' + leagueUrl + ' - ' + e.getMessage())
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
         null
     }
 }
 
-List<NodeChild> findLeaguesHtmls(GPathResult rootNode) {
-    rootNode."**".findAll {
-        NodeChild node = it as NodeChild
-        def name = node.name().toLowerCase()
-        def attributes = node.attributes()
-        name == 'a' && attributes.containsKey('href')
-    }
+
+List<NodeChild> findLeaguesNodes(GPathResult rootNode) {
+    int mainLeaguesAmount = 0
+    rootNode.children().findResults {
+        NodeChild li = it as NodeChild
+        NodeChild div = li.children().iterator().next() as NodeChild
+        def iterator = div.children().iterator()
+        NodeChild toCheck = iterator.next() as NodeChild
+        String name = toCheck.name()
+        GPathResult span = iterator.next() as GPathResult
+        if(name == 'a' && toCheck.attributes().containsKey('href') && span.toString().trim().equals('Domestic league')) {
+            String leagueName = toCheck.toString().trim()
+            if(leagueName.contains('U21') || leagueName.contains('Women')) {
+                return toCheck
+            } else if(++mainLeaguesAmount < MAX_MAIN_LEAGUES_AMOUNT) {
+                return toCheck
+            }
+        }
+        null
+    } as List<NodeChild>
 }
 
 String getHtmlContent(String leaguesUrlRequest) {
@@ -451,10 +541,11 @@ String getHtmlContent(String leaguesUrlRequest) {
 }
 
 void fillMatchGoalsStatistics(MatchReport matchReport, GPathResult html) {
+
     List<NodeChild> goalsTrs = html."**".findAll {
         isTagWithAttributeValue(it as NodeChild, 'tr', 'class', 'event    expanded')
     }
-    goalsTrs.every {
+    goalsTrs.each {
         NodeChild goalTrNode = it as NodeChild
         def iterator = goalTrNode.children().iterator()
         NodeChild homePlayerTd = iterator.next() as NodeChild
@@ -474,14 +565,14 @@ void fillMatchGoalsStatistics(MatchReport matchReport, GPathResult html) {
     }
 }
 
-private List<EventReport> getAwayScoredReports(Iterator iterator) {
+List<EventReport> getAwayScoredReports(Iterator iterator) {
     EventReport scoredReport, assistedReport
     iterator.next() //score snapshot
     //away direction
     NodeChild awayPlayerTd = iterator.next() as NodeChild
-    def subIterator = (awayPlayerTd.children().iterator().next() as NodeChild).iterator()
+    def subIterator = (awayPlayerTd.children().iterator().next() as NodeChild).children().iterator()
     NodeChild scoredAtMinuteSpan = subIterator.next() as NodeChild
-    def minute = scoredAtMinuteSpan.toString().find(/\d+/).toInteger()
+    def minute = scoredAtMinuteSpan.toString().find(/\d+/)?.toInteger() ?: 0
     if (minute > 120) minute /= 10
     NodeChild awayScored = subIterator.next() as NodeChild
     PlayerInfo scoredByPlayerInfo = getPlayerInfo(awayScored.attributes().get('href') as String)
@@ -500,66 +591,74 @@ PlayerInfo getPlayerInfo(String playerPath) {
     }
 }
 
-private List<EventReport> getHomeScoredReports(NodeChild homePlayerTd) {
+List<EventReport> getHomeScoredReports(NodeChild homePlayerTd) {
     EventReport scoredReport, assistedReport
-    def subIterator = (homePlayerTd.children().iterator().next() as NodeChild).iterator()
+    def subIterator = (homePlayerTd.children().iterator().next() as NodeChild).children().iterator()
     NodeChild homeScored = subIterator.next() as NodeChild
-    PlayerInfo scoredByPlayerInfo = getPlayerInfo(siteUrl + homeScored.attributes().get('href') as String)
+    PlayerInfo scoredByPlayerInfo = getPlayerInfo(homeScored.attributes().get('href') as String)
     NodeChild scoredAtMinuteSpan = subIterator.next() as NodeChild
-    def minute = scoredAtMinuteSpan.toString().find(/\d+/).toInteger()
+    def minute = scoredAtMinuteSpan.toString().find(/\d+/)?.toInteger() ?: 0
     if (minute > 120) minute /= 10
     scoredReport = new EventReport(minute as byte, GOAL, scoredByPlayerInfo)
     assistedReport = getAssistReport(subIterator, minute)
     [scoredReport, assistedReport]
 }
 
-private EventReport getAssistReport(Iterator subIterator, Number minute) {
+EventReport getAssistReport(Iterator subIterator, Number minute) {
     if (subIterator.hasNext()) {
         subIterator.next() as NodeChild //br
         NodeChild assistSpan = subIterator.next() as NodeChild
         NodeChild assistPlayerA = assistSpan.children().iterator().next() as NodeChild
-        PlayerInfo assistPlayerInfo = getPlayerInfo(siteUrl + assistPlayerA.attributes().get('href') as String)
+        PlayerInfo assistPlayerInfo = getPlayerInfo(assistPlayerA.attributes().get('href') as String)
         return new EventReport(minute as byte, ASSIST, assistPlayerInfo)
     }
     null
 }
 
 void fillMatchSummaryInfo(MatchReport matchReport, GPathResult html) {
-    String info = html.toString()
-    String fullTimeAndSoOn
-    if(info.contains('Half-time')) {
-        String halfTimeAndSoOn = info.substring(info.indexOf('Half-time'))
-        fullTimeAndSoOn = halfTimeAndSoOn.substring(halfTimeAndSoOn.indexOf('Full-time')).trim()
-        String halTime = halfTimeAndSoOn - fullTimeAndSoOn
-        List<Integer> halfTimeGoalsAmounts = addGoalsEventsReports(halTime.replace('Half-time'), matchReport, -1 as byte)
-        if(fullTimeAndSoOn.length() > 'Full-time10 - 10'.length()) {
-            String[] parts = fullTimeAndSoOn.split(' - ')
-            int secondTimeHomeGoalsAmount = parts[0].replace('Full-time','').toInteger() - halfTimeGoalsAmounts[0]
-            secondTimeHomeGoalsAmount.times {
-                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
+    errorAttempts = 0
+    try {
+        error:
+        String info = html.toString()
+        String fullTimeAndSoOn
+        if(info.contains('Half-time')) {
+            String halfTimeAndSoOn = info.substring(info.indexOf('Half-time'))
+            fullTimeAndSoOn = halfTimeAndSoOn.substring(halfTimeAndSoOn.indexOf('Full-time')).trim()
+            String halTime = halfTimeAndSoOn - fullTimeAndSoOn
+            List<Integer> halfTimeGoalsAmounts = addGoalsEventsReports(halTime.replace('Half-time',''), matchReport, -1 as byte)
+            if(fullTimeAndSoOn.length() > 'Full-time10 - 10'.length()) {
+                String[] parts = fullTimeAndSoOn.split(' - ')
+                int secondTimeHomeGoalsAmount = parts[0].replace('Full-time','').toInteger() - halfTimeGoalsAmounts[0]
+                secondTimeHomeGoalsAmount.times {
+                    matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
+                }
+                int secondTimeAwayGoalsAmount = parts[1].substring(0,parts[1].indexOf(parts[1].find(/\D/))).toInteger()
+                secondTimeAwayGoalsAmount.times {
+                    matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
+                }
+            } else {
+                String[] score = fullTimeAndSoOn.replace('Full-time','').split(' - ')
+                int secondTimeHomeGoalsAmount = score[0].toInteger() - halfTimeGoalsAmounts[0]
+                int secondTimeAwayGoalsAmount = score[1].toInteger() - halfTimeGoalsAmounts[1]
+                secondTimeHomeGoalsAmount.times {
+                    matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
+                }
+                secondTimeAwayGoalsAmount.times {
+                    matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-2 as byte, GOAL, null))
+                }
             }
-            int secondTimeAwayGoalsAmount = parts[1].substring(0,parts[1].indexOf(parts[1].find(/\D/))).toInteger()
-            secondTimeAwayGoalsAmount.times {
-                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
-            }
-        } else {
-            String[] score = halTime.split(' - ')
-            int secondTimeHomeGoalsAmount = score[0].toInteger()
-            int secondTimeAwayGoalsAmount = score[1].toInteger()
-            secondTimeHomeGoalsAmount.times {
-                matchReport.resultReport.addEventReport(matchReport.home, new EventReport(-2 as byte, GOAL, null))
-            }
-            secondTimeAwayGoalsAmount.times {
-                matchReport.resultReport.addEventReport(matchReport.away, new EventReport(-2 as byte, GOAL, null))
-            }
+        } else if(info.contains('Full-time')) {
+            fullTimeAndSoOn = info.substring(info.indexOf('Full-time')).trim()
+            if(fullTimeAndSoOn.length() < 'Full-time10 - 10'.length()) addGoalsEventsReports(fullTimeAndSoOn.replace('Full-time',''), matchReport, 0 as byte)
         }
-    } else if(info.contains('Full-time')) {
-        fullTimeAndSoOn = info.substring(info.indexOf('Full-time')).trim()
-        if(fullTimeAndSoOn.length() < 'Full-time10 - 10'.length()) addGoalsEventsReports(fullTimeAndSoOn.replace('Full-time'), matchReport, 0 as byte)
+    } catch (e) {
+        System.err.println('fillPassportData - ' + playerInfo + ' ' + e.getMessage())
+        if(++errorAttempts < MAX_ERRORS_ATTEMPTS) continue error
     }
+
 }
 
-private List<Integer> addGoalsEventsReports(String halTime, matchReport, byte timeCode) {
+List<Integer> addGoalsEventsReports(String halTime, matchReport, byte timeCode) {
     String[] score = halTime.split(' - ')
     int homeGoalsAmount = score[0].toInteger()
     int awayGoalsAmount = score[1].toInteger()

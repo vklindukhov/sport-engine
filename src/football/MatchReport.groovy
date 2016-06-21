@@ -6,7 +6,7 @@ import groovy.transform.ToString
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
 
-@EqualsAndHashCode(includes = ['id'])
+@EqualsAndHashCode(includes = ['url'])
 @ToString(includePackage = false, includes = ['home', 'away', 'url'])
 class MatchReport {
     final static AtomicInteger COUNTER = new AtomicInteger(1)
