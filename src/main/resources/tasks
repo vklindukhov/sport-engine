@@ -1,0 +1,42 @@
+
+# In our university each student take several courses in different subjects (i.e. Math, Java, History, etc.).
+# At the end of the year, if the student pass the exam of the course, get grade greater or equal to 70, then he get the Credit Points of the specific course.
+#
+# Each course has different Credit Points between 1 - 6 depend on its difficulty.
+# For example, Math course is difficult and if you pass the exam you get 6 credit points while History course is much more easier and therefore if you pass the exam (grade >= 70) you get only 1 credit points.
+#
+# SQL
+# Our data is stored in the following schema in the DB:
+# Students:
+# Id
+# Name
+# Age
+#
+# Courses:
+# Id
+# Subject (Math, Java, History, etc.)
+# CreditPoints (1 - 6)
+#
+# Grades:
+# Student_Id
+# Course_Id
+# Grade (0 - 100)
+#
+# Task # 1: please write SQL query which show all the students in the university and their Total Credit Points.
+#
+# Example of result table:
+#
+# Name   |  Total Credit Points
+# ------------------------------------
+# Yossi    |   7
+# Dima    |   0
+# Vova    |   23
+#
+# select
+#   s.name as 'Name', sum(c.CreditPoints) as 'Total Credit Points'
+# from
+#   students s
+#   join grades g on s.id = g.student_id
+#   join courses c on c.id = grades.course_id
+# group by s.id
+# having 70 < sum(g.grade)

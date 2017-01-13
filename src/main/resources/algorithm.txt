@@ -1,0 +1,1 @@
+1. choose players for each team who played in each match > @min_played_min
